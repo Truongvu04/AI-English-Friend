@@ -1,0 +1,41 @@
+:root {
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased
+}
+
+html,
+body,
+#root {
+    width: 100%;
+    min-width: 320px;
+    height: 100%;
+    margin: 0
+}
+
+body {
+    min-height: 100vh;
+    overflow: hidden
+}
+
+.footer-background {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    background: #e6e9f5
+}
+
+.footer-background:after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, rgba(238, 241, 251, .12), rgba(226, 229, 243, .17))
+}
+
+.footer-background video {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: cover
+}

@@ -1,0 +1,74 @@
+# Dependencies and virtual environments
+node_modules/
+**/node_modules/
+.venv/
+**/.venv/
+
+# Build output and generated caches
+dist/
+**/dist/
+dist-ssr/
+coverage/
+.cache/
+**/.cache/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+
+# Logs and temporary files
+logs/
+**/logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.tmp-*
+*.tmp
+*.temp
+
+# Local configuration and secrets. Keep safe templates versionable.
+.env
+**/.env
+!.env.example
+!**/.env.example
+!**/.env.*.example
+*.local
+
+# Downloaded model weights and local model directories
+models/
+**/models/
+*.onnx
+*.gguf
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+
+# Archives, dumps, backups, and generated exports
+*.zip
+*.7z
+*.rar
+*.tar
+*.tar.gz
+*.tgz
+*.gz
+*.sql.gz
+database/backups/
+*_full.sql
+*.bak
+*.backup
+*.dump
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
