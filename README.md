@@ -87,3 +87,21 @@ POST http://localhost:3001/api/chat
 ```
 
 The chat request accepts `message`, `level`, `conversationId`, `personaId`, `messageType`, and optional `audioDurationMs`. Conversations and messages persist in MySQL, and the same persona thread is shared by text and voice turns.
+
+## Local development quick commands
+
+Run these from any working directory by invoking the scripts with their path:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup-all.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup-all.ps1 -CheckOnly
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\start-all.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\status.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stop-all.ps1
+```
+
+If the local PowerShell execution policy already allows project scripts, the shorter `.setup-all.ps1`, `.start-all.ps1`, `.status.ps1`, and `.stop-all.ps1` forms are equivalent.
+
+`setup-all.ps1` validates Node.js, npm, Python, Ollama, workspace dependencies, STT/TTS environments, configured models, and MySQL connectivity. It never imports `database/schema.sql` into an existing database by default. Use `-InitDatabase` only for a confirmed missing or empty `ai_english_friend` database; initialization refuses any database that already contains tables. Use `-PullModels` only when explicitly intending to download configured Ollama models.
+
+The setup layer never installs system software automatically, never overwrites existing `.env` files, never manages the MySQL Windows service, and does not change application runtime behavior. `start-all.ps1` reuses healthy external Ollama/STT/TTS services and records only project-started process ownership under ignored `.runtime/`. `stop-all.ps1` stops only verified project-owned processes.
