@@ -36,11 +36,12 @@ $custom = Resolve-ModelConfigForProfile -ProfileName "custom" -ServerEnv $envSer
 Assert-ModelConfigTest ($custom.chat.model -eq "env-chat" -and $custom.translation.model -eq "env-translation" -and $custom.stt.model -eq "env-stt") "Custom environment inheritance is incorrect."
 Assert-ModelConfigTest ($custom.runtimeOverrides.backend.Count -eq 0 -and $custom.runtimeOverrides.stt.Count -eq 0) "Custom inheritance unexpectedly generated overrides."
 
-$local = '{"schemaVersion":1,"profiles":{"standard":{"chat":{"model":"test-chat-model"},"translation":{"model":"test-translation-model"}},"custom":{"chat":{"model":"local-chat"},"translation":{"model":"local-translation"}}}}' | ConvertFrom-Json
+$local = '{"schemaVersion":1,"profiles":{"standard":{"chat":{"model":"test-chat-model"},"translation":{"model":"test-translation-model"},"stt":{"model":"test-stt-model"},"tts":{"modelPath":"models/test-kokoro.onnx","voicesPath":"models/test-voices.bin"}},"custom":{"chat":{"model":"local-chat"},"translation":{"model":"local-translation"}}}}' | ConvertFrom-Json
 $localMerged = Merge-ModelConfig -Defaults $defaults -LocalOverride $local
 $localStandard = Resolve-ModelConfigForProfile -ProfileName "standard" -ServerEnv $envServer -SttEnv $envStt -TtsEnv $envTts -Config $localMerged
 Assert-ModelConfigTest ($localStandard.chat.model -eq "test-chat-model" -and $localStandard.translation.model -eq "test-translation-model") "Partial local override did not deep-merge."
 Assert-ModelConfigTest ($localStandard.runtimeOverrides.backend.OLLAMA_CHAT_MODEL -eq "test-chat-model" -and $localStandard.runtimeOverrides.backend.OLLAMA_TRANSLATION_MODEL -eq "test-translation-model") "Chat/translation runtime mapping collapsed or was omitted."
+Assert-ModelConfigTest ($localStandard.stt.model -eq "test-stt-model" -and $localStandard.tts.modelPath -eq "models/test-kokoro.onnx" -and $localStandard.tts.voicesPath -eq "models/test-voices.bin") "STT/TTS local asset overrides did not apply."
 $localCustom = Resolve-ModelConfigForProfile -ProfileName "custom" -ServerEnv $envServer -SttEnv $envStt -TtsEnv $envTts -Config $localMerged
 Assert-ModelConfigTest ($localCustom.chat.model -eq "local-chat" -and $localCustom.translation.model -eq "local-translation") "Custom local override did not apply."
 
@@ -54,12 +55,24 @@ $invalidCases = @(
   @{ Config = '{"schemaVersion":2,"profiles":{}}' | ConvertFrom-Json; Message = "schema version" },
   @{ Config = '{"schemaVersion":1,"profiles":{"standard":{"chat":{"provider":"openai"}}}}' | ConvertFrom-Json; Message = "provider" },
   @{ Config = '{"schemaVersion":1,"profiles":{"standard":{"chatModle":{"model":"bad"}}}}' | ConvertFrom-Json; Message = "unknown key" },
-  @{ Config = '{"schemaVersion":1,"profiles":{"standard":{"tts":{"modelPath":"*bad"}}}}' | ConvertFrom-Json; Message = "path" }
+  @{ Config = '{"schemaVersion":1,"profiles":{"standard":{"tts":{"modelPath":"*bad"}}}}' | ConvertFrom-Json; Message = "path" },
+  @{ Config = '{"schemaVersion":1,"profiles":5}' | ConvertFrom-Json; Message = "profiles type" },
+  @{ Config = '{"schemaVersion":1,"profiles":{"standard":{"chat":{"model":42}}}}' | ConvertFrom-Json; Message = "model type" }
 )
 foreach ($case in $invalidCases) {
   $threw = $false
   try { Validate-ModelConfig -Config $case.Config -SourceLabel "test" | Out-Null } catch { $threw = $true }
   Assert-ModelConfigTest $threw "Invalid $($case.Message) configuration was accepted."
+}
+
+$invalidJsonPath = Join-Path ([IO.Path]::GetTempPath()) ("ai-english-friend-invalid-model-config-{0}.json" -f $PID)
+try {
+  [IO.File]::WriteAllText($invalidJsonPath, '{"schemaVersion":1,')
+  $threw = $false
+  try { Read-ModelConfigFile -Path $invalidJsonPath | Out-Null } catch { $threw = $true }
+  Assert-ModelConfigTest $threw "Invalid JSON file was accepted."
+} finally {
+  if (Test-Path -LiteralPath $invalidJsonPath) { Remove-Item -LiteralPath $invalidJsonPath -Force }
 }
 
 Assert-ModelConfigTest ($low.tts.modelPath -eq $envTts.KOKORO_MODEL_PATH -and $low.tts.voicesPath -eq $envTts.KOKORO_VOICES_PATH) "TTS asset inheritance is incorrect."

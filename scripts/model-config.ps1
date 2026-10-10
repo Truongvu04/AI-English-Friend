@@ -37,7 +37,8 @@ function Test-ModelConfigProperty([object]$Object, [string]$Name) {
 }
 
 function Assert-ModelConfigObject([object]$Object, [string]$Label) {
-  if ($null -eq $Object -or $Object -is [string] -or $Object -is [System.Collections.IEnumerable] -and $Object -isnot [pscustomobject]) {
+  $isJsonObject = $Object -is [pscustomobject] -or $Object -is [System.Collections.IDictionary]
+  if ($null -eq $Object -or -not $isJsonObject) {
     throw "$Label must be a JSON object."
   }
 }
