@@ -6,6 +6,19 @@ import mysql from "mysql2/promise";
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const envPath = path.join(projectRoot, "server", ".env");
 const schemaPath = path.join(projectRoot, "database", "schema.sql");
+const disposableDatabaseName = "ai_english_friend_setup_test";
+
+function getRequestedDatabase() {
+  const args = process.argv.slice(2);
+  const databaseIndex = args.indexOf("--database");
+  if (databaseIndex === -1) return null;
+  const requested = args[databaseIndex + 1];
+  if (!requested || args.some((arg, index) => index !== databaseIndex && index !== databaseIndex + 1 && arg.startsWith("--"))) {
+    console.error("[DB] Usage: node scripts/init-database.js [--database ai_english_friend_setup_test]");
+    process.exit(2);
+  }
+  return requested;
+}
 
 function readEnv(filePath) {
   const values = {};
@@ -27,6 +40,7 @@ function isPlaceholder(value) {
 }
 
 const env = readEnv(envPath);
+const requestedDatabase = getRequestedDatabase();
 const required = ["DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME"];
 const missing = required.filter((key) => isPlaceholder(env[key]));
 if (!fs.existsSync(envPath)) {
@@ -41,12 +55,17 @@ if (env.DB_NAME !== "ai_english_friend") {
   console.error("[DB] schema.sql targets the ai_english_friend database. Set DB_NAME=ai_english_friend before using -InitDatabase.");
   process.exit(2);
 }
+if (requestedDatabase && requestedDatabase !== disposableDatabaseName) {
+  console.error(`[DB] Explicit disposable testing only permits ${disposableDatabaseName}.`);
+  process.exit(2);
+}
 if (!fs.existsSync(schemaPath)) {
   console.error("[DB] database/schema.sql is missing.");
   process.exit(2);
 }
 
 let connection;
+const targetDatabase = requestedDatabase || env.DB_NAME;
 try {
   connection = await mysql.createConnection({
     host: env.DB_HOST,
@@ -58,7 +77,7 @@ try {
   });
   const [tableRows] = await connection.query(
     "SELECT COUNT(*) AS table_count FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?",
-    [env.DB_NAME],
+    [targetDatabase],
   );
   const tableCount = Number(tableRows[0]?.table_count || 0);
   if (tableCount > 0) {
@@ -66,9 +85,12 @@ try {
     console.error("Initialization was cancelled to protect existing data.");
     process.exitCode = 5;
   } else {
-    const schemaSql = fs.readFileSync(schemaPath, "utf8");
+    let schemaSql = fs.readFileSync(schemaPath, "utf8");
+    if (requestedDatabase) {
+      schemaSql = schemaSql.replace(/\bai_english_friend\b/g, targetDatabase);
+    }
     await connection.query(schemaSql);
-    console.log("Fresh database schema initialized from database/schema.sql.");
+    console.log(`${requestedDatabase ? "Fresh disposable database" : "Fresh database schema"} initialized from database/schema.sql.`);
     console.log("No seed rows or personal data were imported.");
   }
 } catch (error) {

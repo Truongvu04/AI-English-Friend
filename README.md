@@ -100,8 +100,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\status.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stop-all.ps1
 ```
 
-If the local PowerShell execution policy already allows project scripts, the shorter `.setup-all.ps1`, `.start-all.ps1`, `.status.ps1`, and `.stop-all.ps1` forms are equivalent.
+If the local PowerShell execution policy already allows project scripts, the shorter `.\setup-all.ps1`, `.\start-all.ps1`, `.\status.ps1`, and `.\stop-all.ps1` forms are equivalent.
 
 `setup-all.ps1` validates Node.js, npm, Python, Ollama, workspace dependencies, STT/TTS environments, configured models, and MySQL connectivity. It never imports `database/schema.sql` into an existing database by default. Use `-InitDatabase` only for a confirmed missing or empty `ai_english_friend` database; initialization refuses any database that already contains tables. Use `-PullModels` only when explicitly intending to download configured Ollama models.
 
 The setup layer never installs system software automatically, never overwrites existing `.env` files, never manages the MySQL Windows service, and does not change application runtime behavior. `start-all.ps1` reuses healthy external Ollama/STT/TTS services and records only project-started process ownership under ignored `.runtime/`. `stop-all.ps1` stops only verified project-owned processes.
+
+The `.cmd` launchers (`setup-all.cmd`, `start-all.cmd`, `status.cmd`, and `stop-all.cmd`) run the same PowerShell source scripts with process-local `-ExecutionPolicy Bypass`, forward arguments, and return the PowerShell exit code. They do not change machine or user execution policy and do not require Administrator access.
+
+For an isolated fresh-schema check, run `node scripts/test-init-database-disposable.js`. It uses only the clearly named disposable database `ai_english_friend_setup_test`, refuses to touch it if it already exists, verifies the 7-table baseline and second-run refusal, then removes only that disposable database.
