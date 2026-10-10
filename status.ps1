@@ -9,12 +9,13 @@ $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $projectRoot
 
 $state = Read-ProjectRuntimeState
+$hardwareProfile = Read-HardwareProfileMetadata
 $serverEnv = Read-EnvFile -Path (Join-Path $projectRoot "server/.env")
 $sttEnv = Read-EnvFile -Path (Join-Path $projectRoot "stt-service/.env")
 $ttsEnv = Read-EnvFile -Path (Join-Path $projectRoot "tts-service/.env")
 $ollamaUrl = (Get-EnvValue -Values $serverEnv -Name "OLLAMA_URL" -Default "http://127.0.0.1:11434").TrimEnd("/")
-$chatModel = Get-EnvValue -Values $serverEnv -Name "OLLAMA_CHAT_MODEL" -Default "qwen3:4b"
-$translationModel = Get-EnvValue -Values $serverEnv -Name "OLLAMA_TRANSLATION_MODEL" -Default $chatModel
+$chatModel = if ($hardwareProfile -and $hardwareProfile.chatModel) { [string]$hardwareProfile.chatModel } else { Get-EnvValue -Values $serverEnv -Name "OLLAMA_CHAT_MODEL" -Default "qwen3:4b" }
+$translationModel = if ($hardwareProfile -and $hardwareProfile.translationModel) { [string]$hardwareProfile.translationModel } else { Get-EnvValue -Values $serverEnv -Name "OLLAMA_TRANSLATION_MODEL" -Default $chatModel }
 $backendPort = [int](Get-EnvValue -Values $serverEnv -Name "PORT" -Default "3001")
 $sttHost = Get-EnvValue -Values $sttEnv -Name "FASTER_WHISPER_HOST" -Default "127.0.0.1"
 $sttPort = [int](Get-EnvValue -Values $sttEnv -Name "FASTER_WHISPER_PORT" -Default "8765")
@@ -37,6 +38,14 @@ function Ownership-Label([string]$Service) {
 
 Write-Host "AI English Friend status"
 Write-Host "======================="
+
+if ($hardwareProfile) {
+  $profileRam = if ($null -eq $hardwareProfile.detectedRamGb -or [string]::IsNullOrWhiteSpace([string]$hardwareProfile.detectedRamGb)) { "unknown" } else { "$($hardwareProfile.detectedRamGb) GB" }
+  Write-Host "Hardware profile: $($hardwareProfile.resolvedProfile) (requested: $($hardwareProfile.requestedProfile), RAM: $profileRam)"
+  Write-Host "Hardware policy: $($hardwareProfile.resourcePolicy)"
+} else {
+  Write-Host "Hardware profile: NOT ACTIVE"
+}
 
 $dbRaw = & node (Join-Path $projectRoot "scripts/check-database.js") --json 2>$null
 if ($LASTEXITCODE -eq 0 -and $dbRaw) {
@@ -103,7 +112,7 @@ if ($frontend.Ready) {
 Write-Host ""
 Write-Host "Chat model: $chatModel"
 Write-Host "Translation model: $translationModel"
-Write-Host "Resource mode: $(Get-EnvValue -Values $serverEnv -Name 'AI_RESOURCE_MODE' -Default 'auto')"
+Write-Host "Resource mode: $(if ($hardwareProfile -and $hardwareProfile.resourceMode) { $hardwareProfile.resourceMode } else { Get-EnvValue -Values $serverEnv -Name 'AI_RESOURCE_MODE' -Default 'auto' })"
 Write-Host "Demo mode: $(Get-EnvValue -Values $serverEnv -Name 'AI_DEMO_MODE' -Default 'false')"
 Write-Host "Frontend: http://127.0.0.1:$frontendPort"
 Write-Host "Backend:  http://127.0.0.1:$backendPort"

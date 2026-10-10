@@ -1,11 +1,15 @@
 [CmdletBinding()]
-param()
+param(
+  [Alias("Profile")]
+  [string]$HardwareProfile = "auto"
+)
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $projectRoot "scripts/project-common.ps1")
+. (Join-Path $projectRoot "scripts/hardware-profiles.ps1")
 Set-Location $projectRoot
 Ensure-ProjectDirectories
 $nullInputPath = Get-NullInputPath
@@ -15,16 +19,22 @@ $serverEnv = Read-EnvFile -Path (Join-Path $projectRoot "server/.env")
 $sttEnv = Read-EnvFile -Path (Join-Path $projectRoot "stt-service/.env")
 $ttsEnv = Read-EnvFile -Path (Join-Path $projectRoot "tts-service/.env")
 $ollamaUrl = (Get-EnvValue -Values $serverEnv -Name "OLLAMA_URL" -Default "http://127.0.0.1:11434").TrimEnd("/")
-$chatModel = Get-EnvValue -Values $serverEnv -Name "OLLAMA_CHAT_MODEL" -Default "qwen3:4b"
 $backendPort = [int](Get-EnvValue -Values $serverEnv -Name "PORT" -Default "3001")
 $sttHost = Get-EnvValue -Values $sttEnv -Name "FASTER_WHISPER_HOST" -Default "127.0.0.1"
 $sttPort = [int](Get-EnvValue -Values $sttEnv -Name "FASTER_WHISPER_PORT" -Default "8765")
 $ttsHost = Get-EnvValue -Values $ttsEnv -Name "KOKORO_HOST" -Default "127.0.0.1"
 $ttsPort = [int](Get-EnvValue -Values $ttsEnv -Name "KOKORO_PORT" -Default "8766")
 $frontendPort = 5173
-
 $results = [ordered]@{}
 $criticalFailure = $false
+$startedThisRun = @{}
+
+try {
+  $profileContext = Get-HardwareProfileContext -RequestedProfile $HardwareProfile -ServerEnv $serverEnv -SttEnv $sttEnv -TtsEnv $ttsEnv
+} catch {
+  Write-ErrorMessage $_.Exception.Message
+  exit 2
+}
 
 function Set-Result([string]$Name, [string]$Status, [string]$Detail) {
   $script:results[$Name] = [pscustomobject]@{ Status = $Status; Detail = $Detail }
@@ -38,20 +48,46 @@ function Get-ProcessConflictMessage([int]$Port) {
   return "PORT CONFLICT on $Port (PID $owner)"
 }
 
+function Get-ServiceOwnershipDetail([string]$Service) {
+  $record = Get-OwnedServiceRecord -State $state -Service $Service
+  if ($record -and (Test-OwnedProcess -Record $record)) { return "PROJECT-OWNED / PRE-EXISTING" }
+  if ($record) { Remove-OwnedServiceRecord -State $state -Service $Service }
+  return "EXTERNAL / PRE-EXISTING"
+}
+
 function Test-ExistingOrExternal([string]$Service, [string]$Endpoint) {
   $health = Test-HttpEndpoint -Url $Endpoint -TimeoutSec 3
   if (-not $health.Ready) { return $false }
   $record = Get-OwnedServiceRecord -State $state -Service $Service
-  if ($record -and -not (Test-OwnedProcess -Record $record)) {
-    Remove-OwnedServiceRecord -State $state -Service $Service
-  }
+  if ($record -and -not (Test-OwnedProcess -Record $record)) { Remove-OwnedServiceRecord -State $state -Service $Service }
   return $true
+}
+
+function ConvertTo-PowerShellLiteral([string]$Value) {
+  return "'" + ([string]$Value -replace "'", "''") + "'"
+}
+
+function ConvertTo-PowerShellCommand([string]$FilePath, [string[]]$Arguments, [hashtable]$EnvironmentOverrides) {
+  $parts = @()
+  foreach ($key in @($EnvironmentOverrides.Keys | Sort-Object)) {
+    $parts += "`$env:$key = $(ConvertTo-PowerShellLiteral ([string]$EnvironmentOverrides[$key]))"
+  }
+  $command = "& $(ConvertTo-PowerShellLiteral $FilePath)"
+  foreach ($argument in @($Arguments)) { $command += " $(ConvertTo-PowerShellLiteral ([string]$argument))" }
+  $parts += $command
+  return ($parts -join "; ")
+}
+
+function Start-DetachedCommand([string]$Service, [string]$CommandText, [string]$WorkingDirectory) {
+  $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($CommandText))
+  $arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encodedCommand"
+  return Start-Process -FilePath "powershell.exe" -ArgumentList $arguments -WorkingDirectory $WorkingDirectory -RedirectStandardInput $nullInputPath -RedirectStandardOutput (Join-Path $script:LogRoot "$($Service.ToLower()).out.log") -RedirectStandardError (Join-Path $script:LogRoot "$($Service.ToLower()).err.log") -WindowStyle Hidden -PassThru
 }
 
 function Start-Ollama {
   $endpoint = "$ollamaUrl/api/tags"
-  if (Test-ExistingOrExternal -Service "ollama" -Endpoint $endpoint) {
-    Set-Result "Ollama" "READY" "EXTERNAL / PRE-EXISTING"
+  if (Test-ExistingOrExternal -Service "Ollama" -Endpoint $endpoint) {
+    Set-Result "Ollama" "READY" (Get-ServiceOwnershipDetail -Service "Ollama")
     return
   }
   $command = Get-Command ollama -ErrorAction SilentlyContinue
@@ -60,25 +96,53 @@ function Start-Ollama {
     $script:criticalFailure = $true
     return
   }
-  if (Get-PortOwner -Port 11434) {
-    Set-Result "Ollama" "UNAVAILABLE" (Get-ProcessConflictMessage -Port 11434)
+  try { $ollamaPort = ([Uri]$ollamaUrl).Port } catch { $ollamaPort = 11434 }
+  if (Get-PortOwner -Port $ollamaPort) {
+    Set-Result "Ollama" "UNAVAILABLE" (Get-ProcessConflictMessage -Port $ollamaPort)
     $script:criticalFailure = $true
     return
   }
-  $process = Start-Process -FilePath $command.Source -ArgumentList @("serve") -WorkingDirectory $projectRoot -RedirectStandardInput $nullInputPath -RedirectStandardOutput (Join-Path $script:LogRoot "ollama.out.log") -RedirectStandardError (Join-Path $script:LogRoot "ollama.err.log") -WindowStyle Hidden -PassThru
+  $commandText = ConvertTo-PowerShellCommand -FilePath $command.Source -Arguments @("serve") -EnvironmentOverrides @{}
+  Start-DetachedCommand -Service "Ollama" -CommandText $commandText -WorkingDirectory $projectRoot | Out-Null
   $health = Wait-HttpEndpoint -Url $endpoint -TimeoutSec 30
   if (-not $health.Ready) {
     Set-Result "Ollama" "UNAVAILABLE" "ollama serve did not become ready."
     $script:criticalFailure = $true
     return
   }
-  Register-OwnedService -State $state -Service "ollama" -ProcessId $process.Id -ExpectedCommand "ollama serve" -Endpoint $endpoint | Out-Null
+  $ownerPid = Wait-PortOwner -Port $ollamaPort -TimeoutSec 5
+  if (-not $ownerPid) {
+    Set-Result "Ollama" "UNAVAILABLE" "Ollama became healthy but process ownership could not be recorded."
+    $script:criticalFailure = $true
+    return
+  }
+  Register-OwnedService -State $state -Service "Ollama" -ProcessId $ownerPid -ExpectedCommand "ollama serve" -Endpoint $endpoint | Out-Null
+  $script:startedThisRun["Ollama"] = $true
   Set-Result "Ollama" "READY" "STARTED BY PROJECT"
 }
 
-function Start-PythonService([string]$Service, [string]$Directory, [string]$ScriptName, [string]$Endpoint, [int]$Port, [string]$ExpectedCommand) {
+function Get-OllamaModels {
+  try {
+    $tags = Invoke-RestMethod -UseBasicParsing -Uri "$ollamaUrl/api/tags" -TimeoutSec 5
+    return @($tags.models | ForEach-Object { [string]$_.name })
+  } catch { return @() }
+}
+
+function Test-RequiredModels {
+  $available = Get-OllamaModels
+  $required = @($profileContext.ChatModel, $profileContext.TranslationModel) | Select-Object -Unique
+  $missing = @($required | Where-Object { $available -notcontains $_ })
+  if ($missing.Count -eq 0) { return $true }
+  Write-ErrorMessage "Required model for profile '$($profileContext.ResolvedProfile)' is not installed:"
+  foreach ($model in $missing) { Write-ErrorMessage $model }
+  Write-ErrorMessage "Run .\setup-all.cmd -Profile $($profileContext.RequestedProfile) -PullModels or ollama pull <model>."
+  $script:criticalFailure = $true
+  return $false
+}
+
+function Start-PythonService([string]$Service, [string]$Directory, [string]$ScriptName, [string]$Endpoint, [int]$Port, [string]$ExpectedCommand, [hashtable]$EnvironmentOverrides) {
   if (Test-ExistingOrExternal -Service $Service -Endpoint $Endpoint) {
-    Set-Result $Service "READY" "EXTERNAL / PRE-EXISTING"
+    Set-Result $Service "READY" (Get-ServiceOwnershipDetail -Service $Service)
     return
   }
   if (Get-PortOwner -Port $Port) {
@@ -91,8 +155,8 @@ function Start-PythonService([string]$Service, [string]$Directory, [string]$Scri
     Set-Result $Service "DEGRADED" "Environment missing; run .\$Directory\setup.ps1."
     return
   }
-  $launcherArguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
-  $launcher = Start-Process -FilePath "powershell.exe" -ArgumentList $launcherArguments -WorkingDirectory (Join-Path $projectRoot $Directory) -RedirectStandardInput $nullInputPath -RedirectStandardOutput (Join-Path $script:LogRoot "$($Service.ToLower()).out.log") -RedirectStandardError (Join-Path $script:LogRoot "$($Service.ToLower()).err.log") -WindowStyle Hidden -PassThru
+  $commandText = ConvertTo-PowerShellCommand -FilePath $scriptPath -Arguments @() -EnvironmentOverrides $EnvironmentOverrides
+  Start-DetachedCommand -Service $Service -CommandText $commandText -WorkingDirectory (Join-Path $projectRoot $Directory) | Out-Null
   $health = Wait-HttpEndpoint -Url $Endpoint -TimeoutSec 45
   if (-not $health.Ready) {
     Set-Result $Service "DEGRADED" "Service did not become ready; browser fallback may remain available."
@@ -104,12 +168,13 @@ function Start-PythonService([string]$Service, [string]$Directory, [string]$Scri
     return
   }
   Register-OwnedService -State $state -Service $Service -ProcessId $ownerPid -ExpectedCommand $ExpectedCommand -Endpoint $Endpoint | Out-Null
+  $script:startedThisRun[$Service] = $true
   Set-Result $Service "READY" "STARTED BY PROJECT"
 }
 
-function Start-NpmService([string]$Service, [string[]]$Arguments, [string]$Endpoint, [int]$Port, [string]$ExpectedCommand, [int]$TimeoutSec = 35) {
+function Start-NpmService([string]$Service, [string[]]$Arguments, [string]$Endpoint, [int]$Port, [string]$ExpectedCommand, [hashtable]$EnvironmentOverrides, [int]$TimeoutSec = 35) {
   if (Test-ExistingOrExternal -Service $Service -Endpoint $Endpoint) {
-    Set-Result $Service "READY" "EXTERNAL / PRE-EXISTING"
+    Set-Result $Service "READY" (Get-ServiceOwnershipDetail -Service $Service)
     return
   }
   if (Get-PortOwner -Port $Port) {
@@ -123,7 +188,8 @@ function Start-NpmService([string]$Service, [string[]]$Arguments, [string]$Endpo
     $script:criticalFailure = $true
     return
   }
-  $launcher = Start-Process -FilePath $npm.Source -ArgumentList $Arguments -WorkingDirectory $projectRoot -RedirectStandardInput $nullInputPath -RedirectStandardOutput (Join-Path $script:LogRoot "$($Service.ToLower()).out.log") -RedirectStandardError (Join-Path $script:LogRoot "$($Service.ToLower()).err.log") -WindowStyle Hidden -PassThru
+  $commandText = ConvertTo-PowerShellCommand -FilePath $npm.Source -Arguments $Arguments -EnvironmentOverrides $EnvironmentOverrides
+  Start-DetachedCommand -Service $Service -CommandText $commandText -WorkingDirectory $projectRoot | Out-Null
   $health = Wait-HttpEndpoint -Url $Endpoint -TimeoutSec $TimeoutSec
   if (-not $health.Ready) {
     Set-Result $Service "UNAVAILABLE" "Process started but readiness endpoint did not respond. See logs/$($Service.ToLower()).err.log."
@@ -137,11 +203,65 @@ function Start-NpmService([string]$Service, [string[]]$Arguments, [string]$Endpo
     return
   }
   Register-OwnedService -State $state -Service $Service -ProcessId $ownerPid -ExpectedCommand $ExpectedCommand -Endpoint $Endpoint | Out-Null
+  $script:startedThisRun[$Service] = $true
   Set-Result $Service "READY" "STARTED BY PROJECT"
 }
 
+function Get-OwnedServiceNames {
+  return @($state.services | Where-Object { $_.startedByProject -and (Test-OwnedProcess -Record $_) } | ForEach-Object { $_.service })
+}
+
+function Test-ActiveProfileCompatibility {
+  $ownedServices = @(Get-OwnedServiceNames)
+  $metadata = Read-HardwareProfileMetadata
+  if ($ownedServices.Count -eq 0) {
+    if ($metadata) { Remove-HardwareProfileMetadata }
+    return $true
+  }
+  if (-not $metadata) {
+    Write-ErrorMessage "Project-owned services are already running without active Hardware Profile metadata. Run .\stop-all.cmd before selecting a profile."
+    return $false
+  }
+  if ([string]$metadata.resolvedProfile -ne [string]$profileContext.ProfileIdentity) {
+    Write-ErrorMessage "Active Hardware Profile '$($metadata.resolvedProfile)' differs from requested effective profile '$($profileContext.ProfileIdentity)'."
+    Write-ErrorMessage "No services were changed. Run .\stop-all.cmd before switching profiles."
+    return $false
+  }
+  return $true
+}
+
+function New-ActiveProfileMetadata {
+  return [ordered]@{
+    status = "active"
+    requestedProfile = $profileContext.RequestedProfile
+    resolvedProfile = $profileContext.ResolvedProfile
+    detectedRamGb = $profileContext.DetectedRamGb
+    detectedLogicalProcessors = $profileContext.LogicalProcessors
+    chatModel = $profileContext.ChatModel
+    translationModel = $profileContext.TranslationModel
+    sttModel = $profileContext.SttModel
+    sttPreload = $profileContext.SttPreload
+    ttsModel = $profileContext.TtsModel
+    ttsPreload = $profileContext.TtsPreload
+    resourcePolicy = $profileContext.ResourcePolicy
+    resourceMode = $profileContext.ResourceMode
+    startedAt = (Get-Date).ToString("o")
+  }
+}
+
+function Cleanup-StartedServices {
+  foreach ($service in @("Frontend", "Backend", "TTS", "STT", "Ollama")) {
+    if ($script:startedThisRun.ContainsKey($service)) { [void](Stop-OwnedService -State $state -Service $service) }
+  }
+  Remove-HardwareProfileMetadata
+}
+
+if (-not (Test-ActiveProfileCompatibility)) { exit 2 }
+
 Write-Host "AI English Friend"
 Write-Host "================="
+Write-Host ""
+Write-HardwareProfileSummary -Context $profileContext
 
 $dbResult = & node (Join-Path $projectRoot "scripts/check-database.js") --json 2>$null
 if ($LASTEXITCODE -eq 0) {
@@ -151,28 +271,37 @@ if ($LASTEXITCODE -eq 0) {
   $criticalFailure = $true
 }
 
-Start-Ollama
-Start-PythonService -Service "STT" -Directory "stt-service" -ScriptName "start.ps1" -Endpoint "http://${sttHost}:$sttPort/health" -Port $sttPort -ExpectedCommand "uvicorn app:app"
-Start-PythonService -Service "TTS" -Directory "tts-service" -ScriptName "start.ps1" -Endpoint "http://${ttsHost}:$ttsPort/health" -Port $ttsPort -ExpectedCommand "uvicorn app:app"
-Start-NpmService -Service "Backend" -Arguments @("run", "dev:server") -Endpoint "http://127.0.0.1:$backendPort/health" -Port $backendPort -ExpectedCommand "src/index.js"
-Start-NpmService -Service "Frontend" -Arguments @("run", "dev:frontend", "--", "--host", "127.0.0.1", "--port", "$frontendPort", "--strictPort") -Endpoint "http://127.0.0.1:$frontendPort/" -Port $frontendPort -ExpectedCommand "vite"
+if (-not $criticalFailure) {
+  Start-Ollama
+  if (-not $criticalFailure) { [void](Test-RequiredModels) }
+}
+if ($criticalFailure) {
+  Cleanup-StartedServices
+  Write-ErrorMessage "Startup stopped before a partial or mismatched profile could run."
+  exit 1
+}
+
+Start-PythonService -Service "STT" -Directory "stt-service" -ScriptName "start.ps1" -Endpoint "http://${sttHost}:$sttPort/health" -Port $sttPort -ExpectedCommand "uvicorn app:app" -EnvironmentOverrides $profileContext.SttOverrides
+Start-PythonService -Service "TTS" -Directory "tts-service" -ScriptName "start.ps1" -Endpoint "http://${ttsHost}:$ttsPort/health" -Port $ttsPort -ExpectedCommand "uvicorn app:app" -EnvironmentOverrides $profileContext.TtsOverrides
+Start-NpmService -Service "Backend" -Arguments @("run", "dev:server") -Endpoint "http://127.0.0.1:$backendPort/health" -Port $backendPort -ExpectedCommand "src/index.js" -EnvironmentOverrides $profileContext.BackendOverrides
+Start-NpmService -Service "Frontend" -Arguments @("run", "dev:frontend", "--", "--host", "127.0.0.1", "--port", "$frontendPort", "--strictPort") -Endpoint "http://127.0.0.1:$frontendPort/" -Port $frontendPort -ExpectedCommand "vite" -EnvironmentOverrides @{}
 
 Write-Host ""
-Write-Host "MySQL       $($results.MySQL.Status) - $($results.MySQL.Detail)"
-Write-Host "Ollama      $($results.Ollama.Status) - $($results.Ollama.Detail)"
-Write-Host "STT         $($results.STT.Status) - $($results.STT.Detail)"
-Write-Host "TTS         $($results.TTS.Status) - $($results.TTS.Detail)"
-Write-Host "Backend     $($results.Backend.Status) - $($results.Backend.Detail)"
-Write-Host "Frontend    $($results.Frontend.Status) - $($results.Frontend.Detail)"
+Write-Host "Services"
+Write-Host "--------"
+foreach ($service in @("MySQL", "Ollama", "STT", "TTS", "Backend", "Frontend")) {
+  $result = $results[$service]
+  if ($result) { Write-Host ("{0,-11} {1,-11} {2}" -f $service, $result.Status, $result.Detail) }
+}
 Write-Host ""
 Write-Host "Frontend: http://127.0.0.1:$frontendPort"
 Write-Host "Backend:  http://127.0.0.1:$backendPort"
-Write-Host "Chat model: $chatModel"
-Write-Host "Resource mode: $(Get-EnvValue -Values $serverEnv -Name 'AI_RESOURCE_MODE' -Default 'auto')"
-Write-Host "Demo mode: $(Get-EnvValue -Values $serverEnv -Name 'AI_DEMO_MODE' -Default 'false')"
 
 if ($criticalFailure) {
-  Write-ErrorMessage "Startup completed with one or more critical services unavailable. Run .\status.ps1 for details."
+  Cleanup-StartedServices
+  Write-ErrorMessage "Startup completed with a critical service unavailable. Run .\status.ps1 for details."
   exit 1
 }
+
+Write-HardwareProfileMetadata -Metadata (New-ActiveProfileMetadata)
 exit 0

@@ -104,6 +104,19 @@ If the local PowerShell execution policy already allows project scripts, the sho
 
 `setup-all.ps1` validates Node.js, npm, Python, Ollama, workspace dependencies, STT/TTS environments, configured models, and MySQL connectivity. It never imports `database/schema.sql` into an existing database by default. Use `-InitDatabase` only for a confirmed missing or empty `ai_english_friend` database; initialization refuses any database that already contains tables. Use `-PullModels` only when explicitly intending to download configured Ollama models.
 
+Batch 4.3 adds hardware-aware startup profiles. `-Profile auto` detects total physical RAM in binary GiB and resolves `<6 GB` to `low-memory`, `6–<16 GB` to `standard`, and `>=16 GB` to `high-performance`. On detection failure it warns and safely falls back to `low-memory`. Explicit `standard` or `high-performance` starts refuse before launching services when the machine does not meet the RAM minimum. `-Profile custom` preserves the existing `.env` model and resource settings without runtime preset overrides.
+
+Use the same profile on setup and start when needed:
+
+```powershell
+.\setup-all.cmd -CheckOnly -Profile auto
+.\start-all.cmd -Profile auto
+.\status.cmd
+.\stop-all.cmd
+```
+
+The selected profile is injected into child processes without rewriting `.env` files. Active profile metadata is stored only in ignored `.runtime/hardware-profile.json`; it contains profile/model/resource settings and hardware facts, never secrets. A missing required Ollama model stops startup before the remaining stack is launched and prints the exact `ollama pull` command.
+
 The setup layer never installs system software automatically, never overwrites existing `.env` files, never manages the MySQL Windows service, and does not change application runtime behavior. `start-all.ps1` reuses healthy external Ollama/STT/TTS services and records only project-started process ownership under ignored `.runtime/`. `stop-all.ps1` stops only verified project-owned processes.
 
 The `.cmd` launchers (`setup-all.cmd`, `start-all.cmd`, `status.cmd`, and `stop-all.cmd`) run the same PowerShell source scripts with process-local `-ExecutionPolicy Bypass`, forward arguments, and return the PowerShell exit code. They do not change machine or user execution policy and do not require Administrator access.

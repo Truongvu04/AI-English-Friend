@@ -3,7 +3,9 @@ param(
   [switch]$CheckOnly,
   [switch]$InitDatabase,
   [switch]$PullModels,
-  [switch]$ReinstallNodeDependencies
+  [switch]$ReinstallNodeDependencies,
+  [Alias("Profile")]
+  [string]$HardwareProfile = "auto"
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,7 +18,18 @@ if ($CheckOnly -and ($InitDatabase -or $PullModels -or $ReinstallNodeDependencie
 
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $projectRoot "scripts/project-common.ps1")
+. (Join-Path $projectRoot "scripts/hardware-profiles.ps1")
 Set-Location $projectRoot
+
+$initialServerEnv = Read-EnvFile -Path (Join-Path $projectRoot "server/.env")
+$initialSttEnv = Read-EnvFile -Path (Join-Path $projectRoot "stt-service/.env")
+$initialTtsEnv = Read-EnvFile -Path (Join-Path $projectRoot "tts-service/.env")
+try {
+  $initialProfileContext = Get-HardwareProfileContext -RequestedProfile $HardwareProfile -ServerEnv $initialServerEnv -SttEnv $initialSttEnv -TtsEnv $initialTtsEnv
+} catch {
+  Write-ErrorMessage $_.Exception.Message
+  exit 2
+}
 
 $failed = $false
 
@@ -102,10 +115,10 @@ function Invoke-ServiceSetupIfNeeded([string]$ServiceName, [string]$Directory, [
   if ($LASTEXITCODE -ne 0) { Fail-Setup "$ServiceName setup failed." }
 }
 
-function Test-OllamaAndModels([hashtable]$ServerEnv) {
+function Test-OllamaAndModels([hashtable]$ServerEnv, $ProfileContext) {
   $ollamaUrl = (Get-EnvValue -Values $ServerEnv -Name "OLLAMA_URL" -Default "http://127.0.0.1:11434").TrimEnd("/")
-  $chatModel = Get-EnvValue -Values $ServerEnv -Name "OLLAMA_CHAT_MODEL" -Default "qwen3:4b"
-  $translationModel = Get-EnvValue -Values $ServerEnv -Name "OLLAMA_TRANSLATION_MODEL" -Default $chatModel
+  $chatModel = $ProfileContext.ChatModel
+  $translationModel = $ProfileContext.TranslationModel
   $health = Test-HttpEndpoint -Url "$ollamaUrl/api/tags" -TimeoutSec 4
   if (-not $health.Ready) {
     Fail-Setup "Ollama API is unavailable at $ollamaUrl. Start Ollama, then run setup-all.ps1 again."
@@ -149,16 +162,25 @@ if (-not $CheckOnly) {
   }
 }
 
+$serverEnv = Read-EnvFile -Path (Join-Path $projectRoot "server/.env")
+$sttEnv = Read-EnvFile -Path (Join-Path $projectRoot "stt-service/.env")
+$ttsEnv = Read-EnvFile -Path (Join-Path $projectRoot "tts-service/.env")
+try {
+  $profileContext = Get-HardwareProfileContext -RequestedProfile $HardwareProfile -ServerEnv $serverEnv -SttEnv $sttEnv -TtsEnv $ttsEnv
+  Write-HardwareProfileSummary -Context $profileContext
+} catch {
+  Fail-Setup $_.Exception.Message
+}
+
 Test-RequiredCommands
 Test-NodeWorkspace
 Invoke-ServiceSetupIfNeeded -ServiceName "STT" -Directory "stt-service" -SetupScript "stt-service/setup.ps1" -VenvPython "stt-service/.venv/Scripts/python.exe"
 Invoke-ServiceSetupIfNeeded -ServiceName "TTS" -Directory "tts-service" -SetupScript "tts-service/setup.ps1" -VenvPython "tts-service/.venv/Scripts/python.exe"
 
-$serverEnv = Read-EnvFile -Path (Join-Path $projectRoot "server/.env")
 if (-not $serverEnv.ContainsKey("DB_HOST") -or -not $serverEnv.ContainsKey("DB_NAME")) {
   Fail-Setup "server/.env does not contain the database configuration used by the current server."
-} else {
-  Test-OllamaAndModels -ServerEnv $serverEnv
+} elseif ($profileContext) {
+  Test-OllamaAndModels -ServerEnv $serverEnv -ProfileContext $profileContext
   if (Test-Path -LiteralPath (Join-Path $projectRoot "scripts/check-database.js")) {
     $dbJson = & node (Join-Path $projectRoot "scripts/check-database.js") --json
     $dbExit = $LASTEXITCODE
@@ -175,6 +197,8 @@ if (-not $serverEnv.ContainsKey("DB_HOST") -or -not $serverEnv.ContainsKey("DB_N
       Write-Warn "The configured database does not exist. Run setup-all.ps1 -InitDatabase only for a confirmed fresh/empty target."
     }
   }
+} else {
+  Write-Warn "Skipping Ollama and database checks because hardware profile resolution failed."
 }
 
 if ($failed) {

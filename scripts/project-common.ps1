@@ -3,6 +3,7 @@ Set-StrictMode -Version Latest
 $script:ProjectRoot = Split-Path -Parent $PSScriptRoot
 $script:RuntimeRoot = Join-Path $script:ProjectRoot ".runtime"
 $script:RuntimeStatePath = Join-Path $script:RuntimeRoot "processes.json"
+$script:HardwareProfileMetadataPath = Join-Path $script:RuntimeRoot "hardware-profile.json"
 $script:NullInputPath = Join-Path $script:RuntimeRoot "empty.stdin"
 $script:LogRoot = Join-Path $script:ProjectRoot "logs"
 
@@ -205,6 +206,23 @@ function Write-ProjectRuntimeState($State) {
   $State.updatedAt = (Get-Date).ToString("o")
   $json = $State | ConvertTo-Json -Depth 8
   [IO.File]::WriteAllText($script:RuntimeStatePath, $json, [Text.UTF8Encoding]::new($false))
+}
+
+function Read-HardwareProfileMetadata {
+  if (-not (Test-Path -LiteralPath $script:HardwareProfileMetadataPath)) { return $null }
+  try { return Get-Content -Raw -LiteralPath $script:HardwareProfileMetadataPath | ConvertFrom-Json } catch { return $null }
+}
+
+function Write-HardwareProfileMetadata($Metadata) {
+  Ensure-ProjectDirectories
+  $json = $Metadata | ConvertTo-Json -Depth 8
+  [IO.File]::WriteAllText($script:HardwareProfileMetadataPath, $json, [Text.UTF8Encoding]::new($false))
+}
+
+function Remove-HardwareProfileMetadata {
+  if (Test-Path -LiteralPath $script:HardwareProfileMetadataPath) {
+    Remove-Item -LiteralPath $script:HardwareProfileMetadataPath -Force
+  }
 }
 
 function Get-OwnedServiceRecord($State, [string]$Service) {

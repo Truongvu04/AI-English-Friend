@@ -20,12 +20,16 @@ foreach ($service in $stopOrder) {
     "stopped" { Write-Host "$service stopped." }
     "stale" { Write-Host "$service metadata was stale and has been cleaned." }
     "not-owned" { Write-Host "$service is not project-owned; left untouched." }
-    "identity-mismatch" { Write-Warn "$service ownership could not be verified; process was left untouched." }
+    "identity-mismatch" { Write-Warn "$service ownership could not be verified; process was left untouched."; $hadFailure = $true }
     "failed" { Write-ErrorMessage "Could not stop project-owned $service."; $hadFailure = $true }
   }
 }
 
 Write-Host "MySQL was not managed or stopped."
 if ($hadFailure) { exit 1 }
+if (@($state.services).Count -eq 0) {
+  Remove-HardwareProfileMetadata
+  Write-Host "Hardware profile metadata cleared."
+}
 Write-Host "No unowned processes were terminated."
 exit 0
