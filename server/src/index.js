@@ -1571,7 +1571,22 @@ function handleGetRuntimeConfig(response, origin) {
       maxTextChars: ttsConfig.maxTextChars,
       language: ttsConfig.language,
     },
+    models: getSafeModelSummary(),
   }, origin);
+}
+
+function getSafeModelSummary() {
+  return {
+    fingerprint: aiConfig.modelConfigFingerprint,
+    chat: { provider: "ollama", model: aiConfig.chatModel },
+    translation: { provider: "ollama", model: aiConfig.translationModel },
+    stt: { provider: sttConfig.provider, model: sttConfig.model },
+    tts: { provider: ttsConfig.provider, model: ttsConfig.model, voices: ttsConfig.voices },
+  };
+}
+
+function handleGetSystemModels(response, origin) {
+  sendJson(response, 200, getSafeModelSummary(), origin);
 }
 
 function handleGetPerformance(response, origin) {
@@ -1915,6 +1930,11 @@ const server = createServer(async (request, response) => {
 
   if (pathname === "/api/system/resources" && request.method === "GET") {
     sendJson(response, 200, resourceManager.getStatus(), origin);
+    return;
+  }
+
+  if (pathname === "/api/system/models" && request.method === "GET") {
+    handleGetSystemModels(response, origin);
     return;
   }
 

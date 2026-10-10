@@ -5,10 +5,6 @@ function Get-HardwareProfileDefinitions {
     "low-memory" = [pscustomobject]@{
       Name = "low-memory"
       MinimumRamGb = 0
-      ChatModel = "qwen3:1.7b"
-      TranslationModel = "qwen3:1.7b"
-      SttModel = "base.en"
-      TtsModel = "kokoro-v1.0.int8.onnx"
       SttPreload = $false
       TtsPreload = $false
       ResourceMode = "low-memory"
@@ -22,10 +18,6 @@ function Get-HardwareProfileDefinitions {
     standard = [pscustomobject]@{
       Name = "standard"
       MinimumRamGb = 6
-      ChatModel = "qwen3:4b"
-      TranslationModel = "qwen3:4b"
-      SttModel = "base.en"
-      TtsModel = "kokoro-v1.0.int8.onnx"
       SttPreload = $false
       TtsPreload = $false
       ResourceMode = "standard"
@@ -39,10 +31,6 @@ function Get-HardwareProfileDefinitions {
     "high-performance" = [pscustomobject]@{
       Name = "high-performance"
       MinimumRamGb = 16
-      ChatModel = "qwen3:4b"
-      TranslationModel = "qwen3:4b"
-      SttModel = "base.en"
-      TtsModel = "kokoro-v1.0.int8.onnx"
       SttPreload = $false
       TtsPreload = $false
       ResourceMode = "standard"
@@ -56,10 +44,6 @@ function Get-HardwareProfileDefinitions {
     custom = [pscustomobject]@{
       Name = "custom"
       MinimumRamGb = 0
-      ChatModel = $null
-      TranslationModel = $null
-      SttModel = $null
-      TtsModel = $null
       SttPreload = $null
       TtsPreload = $null
       ResourceMode = $null
@@ -123,7 +107,7 @@ function Assert-HardwareProfileDefinition([object]$Definition) {
   if ([string]::IsNullOrWhiteSpace($Definition.Name)) { throw "Hardware profile definition has an empty name." }
   if ([double]$Definition.MinimumRamGb -lt 0) { throw "Hardware profile '$($Definition.Name)' has an invalid minimum RAM." }
   if ($Definition.ControlsModels) {
-    foreach ($field in @("ChatModel", "TranslationModel", "SttModel", "SttPreload", "TtsPreload", "ResourceMode")) {
+    foreach ($field in @("SttPreload", "TtsPreload", "ResourceMode")) {
       if (-not ($Definition.PSObject.Properties.Name -contains $field) -or $null -eq $Definition.$field) {
         throw "Hardware profile '$($Definition.Name)' is missing controlled field '$field'."
       }
@@ -160,43 +144,10 @@ function Get-HardwareProfileContext(
     throw "Profile '$requested' requires at least $($definition.MinimumRamGb) GB RAM. Detected: $([math]::Round([double]$HardwareInfo.TotalRamGb, 2)) GB. Use -Profile low-memory or -Profile custom."
   }
 
-  if ($resolved -eq "custom") {
-    $chatModel = Get-EnvValue -Values $ServerEnv -Name "OLLAMA_CHAT_MODEL" -Default (Get-EnvValue -Values $ServerEnv -Name "OLLAMA_MODEL" -Default "qwen3:4b")
-    $translationModel = Get-EnvValue -Values $ServerEnv -Name "OLLAMA_TRANSLATION_MODEL" -Default $chatModel
-    $sttModel = Get-EnvValue -Values $SttEnv -Name "FASTER_WHISPER_MODEL" -Default "base.en"
-    $ttsModelPath = Get-EnvValue -Values $TtsEnv -Name "KOKORO_MODEL_PATH" -Default "models/kokoro-v1.0.int8.onnx"
-    $ttsModel = [IO.Path]::GetFileName($ttsModelPath)
-    $sttPreload = ConvertTo-ProfileBoolean -Value (Get-EnvValue -Values $SttEnv -Name "FASTER_WHISPER_PRELOAD" -Default "false")
-    $ttsPreload = ConvertTo-ProfileBoolean -Value (Get-EnvValue -Values $TtsEnv -Name "KOKORO_PRELOAD" -Default "false")
-    $resourceMode = Get-EnvValue -Values $ServerEnv -Name "AI_RESOURCE_MODE" -Default "auto"
-    $resourcePolicy = "user-managed"
-    $backendOverrides = @{}
-    $sttOverrides = @{}
-    $ttsOverrides = @{}
-  } else {
-    $chatModel = $definition.ChatModel
-    $translationModel = $definition.TranslationModel
-    $sttModel = $definition.SttModel
-    $ttsModel = $definition.TtsModel
-    $sttPreload = [bool]$definition.SttPreload
-    $ttsPreload = [bool]$definition.TtsPreload
-    $resourceMode = $definition.ResourceMode
-    $resourcePolicy = $definition.ResourcePolicy
-    $backendOverrides = @{
-      OLLAMA_CHAT_MODEL = $chatModel
-      OLLAMA_TRANSLATION_MODEL = $translationModel
-      AI_RESOURCE_MODE = $resourceMode
-      STT_IDLE_UNLOAD_MS = [string]$definition.SttIdleUnloadMs
-      TTS_IDLE_UNLOAD_MS = [string]$definition.TtsIdleUnloadMs
-    }
-    $sttOverrides = @{
-      FASTER_WHISPER_MODEL = $sttModel
-      FASTER_WHISPER_PRELOAD = ([string]$sttPreload).ToLowerInvariant()
-    }
-    $ttsOverrides = @{
-      KOKORO_PRELOAD = ([string]$ttsPreload).ToLowerInvariant()
-    }
-  }
+  $sttPreload = if ($resolved -eq "custom") { ConvertTo-ProfileBoolean -Value (Get-EnvValue -Values $SttEnv -Name "FASTER_WHISPER_PRELOAD" -Default "false") } else { [bool]$definition.SttPreload }
+  $ttsPreload = if ($resolved -eq "custom") { ConvertTo-ProfileBoolean -Value (Get-EnvValue -Values $TtsEnv -Name "KOKORO_PRELOAD" -Default "false") } else { [bool]$definition.TtsPreload }
+  $resourceMode = if ($resolved -eq "custom") { Get-EnvValue -Values $ServerEnv -Name "AI_RESOURCE_MODE" -Default "auto" } else { $definition.ResourceMode }
+  $resourcePolicy = $definition.ResourcePolicy
 
   return [pscustomobject]@{
     RequestedProfile = $requested
@@ -209,17 +160,13 @@ function Get-HardwareProfileContext(
     DetectionFailed = [bool]$HardwareInfo.DetectionFailed
     DetectionWarning = $HardwareInfo.DetectionWarning
     Definition = $definition
-    ChatModel = $chatModel
-    TranslationModel = $translationModel
-    SttModel = $sttModel
-    TtsModel = $ttsModel
     SttPreload = $sttPreload
     TtsPreload = $ttsPreload
     ResourceMode = $resourceMode
     ResourcePolicy = $resourcePolicy
-    BackendOverrides = $backendOverrides
-    SttOverrides = $sttOverrides
-    TtsOverrides = $ttsOverrides
+    BackendOverrides = @{}
+    SttOverrides = @{}
+    TtsOverrides = @{}
   }
 }
 
@@ -230,9 +177,6 @@ function Write-HardwareProfileSummary($Context, [string]$Prefix = "") {
   Write-Host "$Prefix Requested profile: $($Context.RequestedProfile)"
   Write-Host "$Prefix Detected RAM: $ram"
   Write-Host "$Prefix Resolved profile: $($Context.ResolvedProfile)"
-  Write-Host "$Prefix Chat model: $($Context.ChatModel)"
-  Write-Host "$Prefix Translation model: $($Context.TranslationModel)"
-  Write-Host "$Prefix STT model: $($Context.SttModel)"
   Write-Host "$Prefix STT preload: $($Context.SttPreload.ToString().ToLowerInvariant())"
   Write-Host "$Prefix TTS preload: $($Context.TtsPreload.ToString().ToLowerInvariant())"
   Write-Host "$Prefix Resource policy: $($Context.ResourcePolicy)"

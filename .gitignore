@@ -37,6 +37,7 @@ lerna-debug.log*
 !**/.env.example
 !**/.env.*.example
 *.local
+config/model-config.local.json
 
 # Downloaded model weights and local model directories
 models/

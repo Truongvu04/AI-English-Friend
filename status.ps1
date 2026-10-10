@@ -6,6 +6,8 @@ Set-StrictMode -Version Latest
 
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $projectRoot "scripts/project-common.ps1")
+. (Join-Path $projectRoot "scripts/hardware-profiles.ps1")
+. (Join-Path $projectRoot "scripts/model-config.ps1")
 Set-Location $projectRoot
 
 $state = Read-ProjectRuntimeState
@@ -14,8 +16,18 @@ $serverEnv = Read-EnvFile -Path (Join-Path $projectRoot "server/.env")
 $sttEnv = Read-EnvFile -Path (Join-Path $projectRoot "stt-service/.env")
 $ttsEnv = Read-EnvFile -Path (Join-Path $projectRoot "tts-service/.env")
 $ollamaUrl = (Get-EnvValue -Values $serverEnv -Name "OLLAMA_URL" -Default "http://127.0.0.1:11434").TrimEnd("/")
-$chatModel = if ($hardwareProfile -and $hardwareProfile.chatModel) { [string]$hardwareProfile.chatModel } else { Get-EnvValue -Values $serverEnv -Name "OLLAMA_CHAT_MODEL" -Default "qwen3:4b" }
-$translationModel = if ($hardwareProfile -and $hardwareProfile.translationModel) { [string]$hardwareProfile.translationModel } else { Get-EnvValue -Values $serverEnv -Name "OLLAMA_TRANSLATION_MODEL" -Default $chatModel }
+$resolvedModelConfig = $null
+try {
+  $statusProfile = if ($hardwareProfile) { [string]$hardwareProfile.resolvedProfile } else { "custom" }
+  $resolvedModelConfig = Resolve-ModelConfigForProfile -ProfileName $statusProfile -ServerEnv $serverEnv -SttEnv $sttEnv -TtsEnv $ttsEnv
+} catch {
+  Write-ErrorMessage $_.Exception.Message
+}
+$chatModel = if ($resolvedModelConfig) { [string]$resolvedModelConfig.chat.model } else { Get-EnvValue -Values $serverEnv -Name "OLLAMA_CHAT_MODEL" -Default "qwen3:4b" }
+$translationModel = if ($resolvedModelConfig) { [string]$resolvedModelConfig.translation.model } else { Get-EnvValue -Values $serverEnv -Name "OLLAMA_TRANSLATION_MODEL" -Default $chatModel }
+$sttModel = if ($resolvedModelConfig) { [string]$resolvedModelConfig.stt.model } else { Get-EnvValue -Values $sttEnv -Name "FASTER_WHISPER_MODEL" -Default "base.en" }
+$ttsModel = if ($resolvedModelConfig) { [IO.Path]::GetFileName($resolvedModelConfig.tts.modelPath) } else { [IO.Path]::GetFileName((Get-EnvValue -Values $ttsEnv -Name "KOKORO_MODEL_PATH" -Default "models/kokoro-v1.0.int8.onnx")) }
+$ttsVoices = if ($resolvedModelConfig) { [IO.Path]::GetFileName($resolvedModelConfig.tts.voicesPath) } else { [IO.Path]::GetFileName((Get-EnvValue -Values $ttsEnv -Name "KOKORO_VOICES_PATH" -Default "models/voices-v1.0.bin")) }
 $backendPort = [int](Get-EnvValue -Values $serverEnv -Name "PORT" -Default "3001")
 $sttHost = Get-EnvValue -Values $sttEnv -Name "FASTER_WHISPER_HOST" -Default "127.0.0.1"
 $sttPort = [int](Get-EnvValue -Values $sttEnv -Name "FASTER_WHISPER_PORT" -Default "8765")
@@ -112,6 +124,10 @@ if ($frontend.Ready) {
 Write-Host ""
 Write-Host "Chat model: $chatModel"
 Write-Host "Translation model: $translationModel"
+Write-Host "STT model: $sttModel"
+Write-Host "TTS model: $ttsModel"
+Write-Host "TTS voices: $ttsVoices"
+if ($resolvedModelConfig) { Write-Host "Model configuration fingerprint: $($resolvedModelConfig.fingerprint)" }
 Write-Host "Resource mode: $(if ($hardwareProfile -and $hardwareProfile.resourceMode) { $hardwareProfile.resourceMode } else { Get-EnvValue -Values $serverEnv -Name 'AI_RESOURCE_MODE' -Default 'auto' })"
 Write-Host "Demo mode: $(Get-EnvValue -Values $serverEnv -Name 'AI_DEMO_MODE' -Default 'false')"
 Write-Host "Frontend: http://127.0.0.1:$frontendPort"

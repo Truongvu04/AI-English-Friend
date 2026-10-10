@@ -48,22 +48,17 @@ foreach ($name in @("low-memory", "standard", "high-performance", "custom")) {
 
 $low = Get-HardwareProfileContext -RequestedProfile "auto" -HardwareInfo (New-SyntheticHardwareInfo 3.68)
 Assert-ProfileTest ($low.ResolvedProfile -eq "low-memory") "Auto profile did not select low-memory for 3.68 GB."
-Assert-ProfileTest ($low.ChatModel -eq "qwen3:1.7b") "Low-memory chat model is incorrect."
-Assert-ProfileTest ($low.TranslationModel -eq "qwen3:1.7b") "Low-memory translation model is incorrect."
 Assert-ProfileTest ($low.ResourceMode -eq "low-memory") "Low-memory resource mode is incorrect."
 Assert-ProfileTest (-not $low.SttPreload -and -not $low.TtsPreload) "Low-memory preload policy is not conservative."
 
 $standard = Get-HardwareProfileContext -RequestedProfile "standard" -HardwareInfo (New-SyntheticHardwareInfo 8)
-Assert-ProfileTest ($standard.ChatModel -eq "qwen3:4b") "Standard chat model is incorrect."
-Assert-ProfileTest ($standard.TranslationModel -eq "qwen3:4b") "Standard translation model is incorrect."
+Assert-ProfileTest ($standard.ResourceMode -eq "standard") "Standard resource mode is incorrect."
 
-$customServerEnv = @{ OLLAMA_CHAT_MODEL = "custom-chat"; OLLAMA_TRANSLATION_MODEL = "custom-translation"; AI_RESOURCE_MODE = "auto" }
-$customSttEnv = @{ FASTER_WHISPER_MODEL = "custom-stt"; FASTER_WHISPER_PRELOAD = "true" }
-$customTtsEnv = @{ KOKORO_MODEL_PATH = "models/custom.onnx"; KOKORO_PRELOAD = "true" }
+$customServerEnv = @{ AI_RESOURCE_MODE = "auto" }
+$customSttEnv = @{ FASTER_WHISPER_PRELOAD = "true" }
+$customTtsEnv = @{ KOKORO_PRELOAD = "true" }
 $custom = Get-HardwareProfileContext -RequestedProfile "custom" -ServerEnv $customServerEnv -SttEnv $customSttEnv -TtsEnv $customTtsEnv -HardwareInfo (New-SyntheticHardwareInfo 3.68)
 Assert-ProfileTest ($custom.ResolvedProfile -eq "custom") "Custom profile was not recognized."
-Assert-ProfileTest ($custom.ChatModel -eq "custom-chat" -and $custom.TranslationModel -eq "custom-translation") "Custom Ollama environment was not preserved."
-Assert-ProfileTest ($custom.SttModel -eq "custom-stt" -and $custom.TtsModel -eq "custom.onnx") "Custom STT/TTS environment was not preserved."
 Assert-ProfileTest ($custom.SttPreload -and $custom.TtsPreload) "Custom preload values were not preserved."
 Assert-ProfileTest ($custom.BackendOverrides.Count -eq 0 -and $custom.SttOverrides.Count -eq 0 -and $custom.TtsOverrides.Count -eq 0) "Custom profile unexpectedly generated runtime overrides."
 

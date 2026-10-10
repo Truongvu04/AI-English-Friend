@@ -21,6 +21,7 @@ export function createAiConfig(env = process.env) {
     ollamaUrl: (env.OLLAMA_URL || "http://localhost:11434").replace(/\/$/, ""),
     chatModel,
     translationModel,
+    modelConfigFingerprint: env.AI_MODEL_CONFIG_FINGERPRINT || null,
     keepAlive,
     think,
     streaming: readBoolean(env.AI_STREAMING, true),

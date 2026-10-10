@@ -19,6 +19,7 @@ if ($CheckOnly -and ($InitDatabase -or $PullModels -or $ReinstallNodeDependencie
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $projectRoot "scripts/project-common.ps1")
 . (Join-Path $projectRoot "scripts/hardware-profiles.ps1")
+. (Join-Path $projectRoot "scripts/model-config.ps1")
 Set-Location $projectRoot
 
 $initialServerEnv = Read-EnvFile -Path (Join-Path $projectRoot "server/.env")
@@ -32,6 +33,8 @@ try {
 }
 
 $failed = $false
+$modelConfig = $null
+$resolvedModelConfig = $null
 
 function Fail-Setup([string]$Message) {
   Write-ErrorMessage $Message
@@ -115,10 +118,10 @@ function Invoke-ServiceSetupIfNeeded([string]$ServiceName, [string]$Directory, [
   if ($LASTEXITCODE -ne 0) { Fail-Setup "$ServiceName setup failed." }
 }
 
-function Test-OllamaAndModels([hashtable]$ServerEnv, $ProfileContext) {
+function Test-OllamaAndModels([hashtable]$ServerEnv, $ResolvedModelConfig) {
   $ollamaUrl = (Get-EnvValue -Values $ServerEnv -Name "OLLAMA_URL" -Default "http://127.0.0.1:11434").TrimEnd("/")
-  $chatModel = $ProfileContext.ChatModel
-  $translationModel = $ProfileContext.TranslationModel
+  $chatModel = $ResolvedModelConfig.chat.model
+  $translationModel = $ResolvedModelConfig.translation.model
   $health = Test-HttpEndpoint -Url "$ollamaUrl/api/tags" -TimeoutSec 4
   if (-not $health.Ready) {
     Fail-Setup "Ollama API is unavailable at $ollamaUrl. Start Ollama, then run setup-all.ps1 again."
@@ -168,6 +171,16 @@ $ttsEnv = Read-EnvFile -Path (Join-Path $projectRoot "tts-service/.env")
 try {
   $profileContext = Get-HardwareProfileContext -RequestedProfile $HardwareProfile -ServerEnv $serverEnv -SttEnv $sttEnv -TtsEnv $ttsEnv
   Write-HardwareProfileSummary -Context $profileContext
+  $modelConfig = Get-EffectiveModelConfig
+  $resolvedModelConfig = Resolve-ModelConfigForProfile -ProfileName $profileContext.ResolvedProfile -ServerEnv $serverEnv -SttEnv $sttEnv -TtsEnv $ttsEnv -Config $modelConfig
+  $modelSummary = Get-ModelConfigSummary -Resolved $resolvedModelConfig
+  Write-Host "Model configuration: $($modelSummary.fingerprint)"
+  Write-Host "Chat model: $($modelSummary.chat.model)"
+  Write-Host "Translation model: $($modelSummary.translation.model)"
+  Write-Host "STT model: $($modelSummary.stt.model)"
+  Write-Host "TTS assets: $($modelSummary.tts.model), $($modelSummary.tts.voices)"
+  $missingAssets = @(Test-ModelConfigAssetPaths -Resolved $resolvedModelConfig)
+  if ($missingAssets.Count -gt 0) { Fail-Setup "Kokoro asset file(s) are missing: $($missingAssets -join ', ')" }
 } catch {
   Fail-Setup $_.Exception.Message
 }
@@ -179,8 +192,8 @@ Invoke-ServiceSetupIfNeeded -ServiceName "TTS" -Directory "tts-service" -SetupSc
 
 if (-not $serverEnv.ContainsKey("DB_HOST") -or -not $serverEnv.ContainsKey("DB_NAME")) {
   Fail-Setup "server/.env does not contain the database configuration used by the current server."
-} elseif ($profileContext) {
-  Test-OllamaAndModels -ServerEnv $serverEnv -ProfileContext $profileContext
+} elseif ($profileContext -and $resolvedModelConfig) {
+  Test-OllamaAndModels -ServerEnv $serverEnv -ResolvedModelConfig $resolvedModelConfig
   if (Test-Path -LiteralPath (Join-Path $projectRoot "scripts/check-database.js")) {
     $dbJson = & node (Join-Path $projectRoot "scripts/check-database.js") --json
     $dbExit = $LASTEXITCODE

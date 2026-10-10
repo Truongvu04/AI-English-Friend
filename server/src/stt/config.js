@@ -11,6 +11,7 @@ function readBoolean(value, fallback) {
 export function createSttConfig(env = process.env) {
   return {
     provider: env.STT_PROVIDER || "faster-whisper",
+    model: env.FASTER_WHISPER_MODEL || "base.en",
     fasterWhisperUrl: (env.FASTER_WHISPER_URL || "http://127.0.0.1:8765").replace(/\/$/, ""),
     browserFallback: readBoolean(env.STT_BROWSER_FALLBACK, true),
     maxAudioBytes: readPositiveInteger(env.STT_MAX_AUDIO_BYTES, 20 * 1024 * 1024),

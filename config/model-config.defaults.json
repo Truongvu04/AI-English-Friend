@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "profiles": {
+    "low-memory": {
+      "chat": {
+        "provider": "ollama",
+        "model": "qwen3:1.7b"
+      },
+      "translation": {
+        "provider": "ollama",
+        "model": "qwen3:1.7b"
+      },
+      "stt": {
+        "provider": "faster-whisper",
+        "model": "base.en"
+      },
+      "tts": {
+        "provider": "kokoro",
+        "modelPath": null,
+        "voicesPath": null
+      }
+    },
+    "standard": {
+      "chat": {
+        "provider": "ollama",
+        "model": "qwen3:4b"
+      },
+      "translation": {
+        "provider": "ollama",
+        "model": "qwen3:4b"
+      },
+      "stt": {
+        "provider": "faster-whisper",
+        "model": "base.en"
+      },
+      "tts": {
+        "provider": "kokoro",
+        "modelPath": null,
+        "voicesPath": null
+      }
+    },
+    "high-performance": {
+      "chat": {
+        "provider": "ollama",
+        "model": "qwen3:4b"
+      },
+      "translation": {
+        "provider": "ollama",
+        "model": "qwen3:4b"
+      },
+      "stt": {
+        "provider": "faster-whisper",
+        "model": "base.en"
+      },
+      "tts": {
+        "provider": "kokoro",
+        "modelPath": null,
+        "voicesPath": null
+      }
+    },
+    "custom": {
+      "chat": null,
+      "translation": null,
+      "stt": null,
+      "tts": null
+    }
+  }
+}

@@ -10,6 +10,7 @@ Set-StrictMode -Version Latest
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $projectRoot "scripts/project-common.ps1")
 . (Join-Path $projectRoot "scripts/hardware-profiles.ps1")
+. (Join-Path $projectRoot "scripts/model-config.ps1")
 Set-Location $projectRoot
 Ensure-ProjectDirectories
 $nullInputPath = Get-NullInputPath
@@ -31,6 +32,10 @@ $startedThisRun = @{}
 
 try {
   $profileContext = Get-HardwareProfileContext -RequestedProfile $HardwareProfile -ServerEnv $serverEnv -SttEnv $sttEnv -TtsEnv $ttsEnv
+  $modelConfig = Get-EffectiveModelConfig
+  $resolvedModelConfig = Resolve-ModelConfigForProfile -ProfileName $profileContext.ResolvedProfile -ServerEnv $serverEnv -SttEnv $sttEnv -TtsEnv $ttsEnv -Config $modelConfig
+  $missingAssets = @(Test-ModelConfigAssetPaths -Resolved $resolvedModelConfig)
+  if ($missingAssets.Count -gt 0) { throw "Kokoro asset file(s) are missing: $($missingAssets -join ', ')" }
 } catch {
   Write-ErrorMessage $_.Exception.Message
   exit 2
@@ -130,7 +135,7 @@ function Get-OllamaModels {
 
 function Test-RequiredModels {
   $available = Get-OllamaModels
-  $required = @($profileContext.ChatModel, $profileContext.TranslationModel) | Select-Object -Unique
+  $required = @($resolvedModelConfig.chat.model, $resolvedModelConfig.translation.model) | Select-Object -Unique
   $missing = @($required | Where-Object { $available -notcontains $_ })
   if ($missing.Count -eq 0) { return $true }
   Write-ErrorMessage "Required model for profile '$($profileContext.ResolvedProfile)' is not installed:"
@@ -222,9 +227,10 @@ function Test-ActiveProfileCompatibility {
     Write-ErrorMessage "Project-owned services are already running without active Hardware Profile metadata. Run .\stop-all.cmd before selecting a profile."
     return $false
   }
-  if ([string]$metadata.resolvedProfile -ne [string]$profileContext.ProfileIdentity) {
-    Write-ErrorMessage "Active Hardware Profile '$($metadata.resolvedProfile)' differs from requested effective profile '$($profileContext.ProfileIdentity)'."
-    Write-ErrorMessage "No services were changed. Run .\stop-all.cmd before switching profiles."
+  $metadataFingerprint = if ($metadata.PSObject.Properties.Name -contains "modelConfigFingerprint") { [string]$metadata.modelConfigFingerprint } else { "" }
+  if ([string]$metadata.resolvedProfile -ne [string]$profileContext.ProfileIdentity -or [string]::IsNullOrWhiteSpace($metadataFingerprint) -or $metadataFingerprint -ne [string]$resolvedModelConfig.fingerprint) {
+    Write-ErrorMessage "The active Hardware Profile or Model Configuration differs from the requested configuration."
+    Write-ErrorMessage "No services were changed. Run .\stop-all.cmd before switching profiles or models."
     return $false
   }
   return $true
@@ -237,11 +243,13 @@ function New-ActiveProfileMetadata {
     resolvedProfile = $profileContext.ResolvedProfile
     detectedRamGb = $profileContext.DetectedRamGb
     detectedLogicalProcessors = $profileContext.LogicalProcessors
-    chatModel = $profileContext.ChatModel
-    translationModel = $profileContext.TranslationModel
-    sttModel = $profileContext.SttModel
+    modelConfigFingerprint = $resolvedModelConfig.fingerprint
+    chatModel = $resolvedModelConfig.chat.model
+    translationModel = $resolvedModelConfig.translation.model
+    sttModel = $resolvedModelConfig.stt.model
     sttPreload = $profileContext.SttPreload
-    ttsModel = $profileContext.TtsModel
+    ttsModel = [IO.Path]::GetFileName($resolvedModelConfig.tts.modelPath)
+    ttsVoices = [IO.Path]::GetFileName($resolvedModelConfig.tts.voicesPath)
     ttsPreload = $profileContext.TtsPreload
     resourcePolicy = $profileContext.ResourcePolicy
     resourceMode = $profileContext.ResourceMode
@@ -262,6 +270,12 @@ Write-Host "AI English Friend"
 Write-Host "================="
 Write-Host ""
 Write-HardwareProfileSummary -Context $profileContext
+Write-Host "Model configuration fingerprint: $($resolvedModelConfig.fingerprint)"
+Write-Host "Chat model: $($resolvedModelConfig.chat.model)"
+Write-Host "Translation model: $($resolvedModelConfig.translation.model)"
+Write-Host "STT model: $($resolvedModelConfig.stt.model)"
+Write-Host "TTS model: $([IO.Path]::GetFileName($resolvedModelConfig.tts.modelPath))"
+Write-Host "TTS voices: $([IO.Path]::GetFileName($resolvedModelConfig.tts.voicesPath))"
 
 $dbResult = & node (Join-Path $projectRoot "scripts/check-database.js") --json 2>$null
 if ($LASTEXITCODE -eq 0) {
@@ -281,9 +295,20 @@ if ($criticalFailure) {
   exit 1
 }
 
-Start-PythonService -Service "STT" -Directory "stt-service" -ScriptName "start.ps1" -Endpoint "http://${sttHost}:$sttPort/health" -Port $sttPort -ExpectedCommand "uvicorn app:app" -EnvironmentOverrides $profileContext.SttOverrides
-Start-PythonService -Service "TTS" -Directory "tts-service" -ScriptName "start.ps1" -Endpoint "http://${ttsHost}:$ttsPort/health" -Port $ttsPort -ExpectedCommand "uvicorn app:app" -EnvironmentOverrides $profileContext.TtsOverrides
-Start-NpmService -Service "Backend" -Arguments @("run", "dev:server") -Endpoint "http://127.0.0.1:$backendPort/health" -Port $backendPort -ExpectedCommand "src/index.js" -EnvironmentOverrides $profileContext.BackendOverrides
+Start-PythonService -Service "STT" -Directory "stt-service" -ScriptName "start.ps1" -Endpoint "http://${sttHost}:$sttPort/health" -Port $sttPort -ExpectedCommand "uvicorn app:app" -EnvironmentOverrides $resolvedModelConfig.runtimeOverrides.stt
+$ttsOverrides = [ordered]@{}
+foreach ($key in @($resolvedModelConfig.runtimeOverrides.tts.Keys)) { $ttsOverrides[$key] = $resolvedModelConfig.runtimeOverrides.tts[$key] }
+Start-PythonService -Service "TTS" -Directory "tts-service" -ScriptName "start.ps1" -Endpoint "http://${ttsHost}:$ttsPort/health" -Port $ttsPort -ExpectedCommand "uvicorn app:app" -EnvironmentOverrides $ttsOverrides
+$backendOverrides = [ordered]@{}
+foreach ($key in @($profileContext.BackendOverrides.Keys)) { $backendOverrides[$key] = $profileContext.BackendOverrides[$key] }
+foreach ($key in @($resolvedModelConfig.runtimeOverrides.backend.Keys)) { $backendOverrides[$key] = $resolvedModelConfig.runtimeOverrides.backend[$key] }
+$backendOverrides.AI_MODEL_CONFIG_FINGERPRINT = $resolvedModelConfig.fingerprint
+if ($profileContext.ResolvedProfile -ne "custom") {
+  $backendOverrides.AI_RESOURCE_MODE = $profileContext.ResourceMode
+  $backendOverrides.STT_IDLE_UNLOAD_MS = [string]$profileContext.Definition.SttIdleUnloadMs
+  $backendOverrides.TTS_IDLE_UNLOAD_MS = [string]$profileContext.Definition.TtsIdleUnloadMs
+}
+Start-NpmService -Service "Backend" -Arguments @("run", "dev:server") -Endpoint "http://127.0.0.1:$backendPort/health" -Port $backendPort -ExpectedCommand "src/index.js" -EnvironmentOverrides $backendOverrides
 Start-NpmService -Service "Frontend" -Arguments @("run", "dev:frontend", "--", "--host", "127.0.0.1", "--port", "$frontendPort", "--strictPort") -Endpoint "http://127.0.0.1:$frontendPort/" -Port $frontendPort -ExpectedCommand "vite" -EnvironmentOverrides @{}
 
 Write-Host ""

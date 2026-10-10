@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "profiles": {
+    "standard": {
+      "chat": {
+        "model": "qwen3:4b"
+      },
+      "translation": {
+        "model": "qwen3:4b"
+      },
+      "stt": {
+        "model": "base.en"
+      },
+      "tts": {
+        "modelPath": "models/kokoro-v1.0.int8.onnx",
+        "voicesPath": "models/voices-v1.0.bin"
+      }
+    },
+    "custom": {
+      "chat": {
+        "model": "my-local-model:latest"
+      },
+      "translation": {
+        "model": "my-translation-model:latest"
+      }
+    }
+  }
+}
