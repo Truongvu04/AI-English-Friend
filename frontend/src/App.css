@@ -16,9 +16,6 @@
 :root{--ink:#f4f3ff;--muted:#a8abc5;--soft:#8589a8;--violet:#aaa0ff;--line:rgba(205,198,255,.16);--paper:rgba(22,25,48,.82);--shadow:rgba(5,7,20,.42)}
 .app-shell{color:var(--ink);background:#101221}
 .app-shell:before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(circle at 50% 42%,rgba(128,113,226,.18),transparent 34%),linear-gradient(180deg,rgba(10,12,28,.24),rgba(10,12,28,.54))}
-.footer-background{background:#101221}
-.footer-background:after{background:linear-gradient(180deg,rgba(9,11,26,.5),rgba(10,12,29,.72)),radial-gradient(circle at 50% 44%,rgba(122,109,216,.16),transparent 37%)}
-.footer-background video{opacity:.62;filter:saturate(.82) brightness(.62) contrast(1.08)}
 .brand-symbol{background:rgba(34,35,64,.78);border-color:rgba(173,160,255,.48);box-shadow:0 5px 18px rgba(5,7,20,.32)}
 .brand-symbol i{background:#b2a8ff}.brand-lockup strong{color:#f5f3ff}.brand-lockup span{color:#a5a8c2}.alex-presence strong{color:#f2f0ff}.alex-presence span{color:#8fcdb6}
 .level-trigger,.nav-icon{color:#c0c2db;background:rgba(28,31,57,.72);border-color:rgba(189,181,255,.12)}.level-trigger:hover,.nav-icon:hover{color:#c6bcff;background:rgba(53,48,88,.84);border-color:rgba(189,181,255,.3)}.level-trigger span{color:#9b9fb9}.level-trigger b{color:#c1b8ff}
@@ -38,8 +35,6 @@
 /* Keep the centre character vivid while darkening only the surrounding background. */
 .app-shell{background:#101221}
 .app-shell:before{background:radial-gradient(circle at 50% 43%,rgba(124,109,225,.16),transparent 31%),linear-gradient(180deg,rgba(9,11,26,.04),rgba(9,11,26,.2))}
-.footer-background:after{background:radial-gradient(ellipse at 50% 43%,transparent 0 23%,rgba(9,11,26,.22) 48%,rgba(9,11,26,.68) 100%),linear-gradient(180deg,rgba(9,11,26,.12),rgba(9,11,26,.45))}
-.footer-background video{opacity:1;filter:saturate(.94) contrast(1.06) brightness(1)}
 .app-content{width:min(1480px,100%)}
 .conversation-wrap{width:min(1180px,100%)}
 .message{max-width:820px}.message-you{max-width:720px}.message p{max-width:780px}

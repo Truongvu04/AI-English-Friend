@@ -121,6 +121,8 @@ Batch 4.4 centralizes supported model selection in `config/model-config.defaults
 
 The safe runtime model summary is available at `GET http://localhost:3001/api/system/models`. It reports provider names, model identifiers, asset basenames, and the normalized configuration fingerprint; it never reports full private paths, credentials, database data, or conversation content.
 
+For a sanitized source handoff, run `.\package-source.cmd` from a clean Git working tree. It writes the tracked-source ZIP, SHA-256 checksum, and package manifest to the ignored `.packages/` directory and validates the extracted archive before returning success.
+
 The setup layer never installs system software automatically, never overwrites existing `.env` files, never manages the MySQL Windows service, and does not change application runtime behavior. `start-all.ps1` reuses healthy external Ollama/STT/TTS services and records only project-started process ownership under ignored `.runtime/`. `stop-all.ps1` stops only verified project-owned processes.
 
 The `.cmd` launchers (`setup-all.cmd`, `start-all.cmd`, `status.cmd`, and `stop-all.cmd`) run the same PowerShell source scripts with process-local `-ExecutionPolicy Bypass`, forward arguments, and return the PowerShell exit code. They do not change machine or user execution policy and do not require Administrator access.
