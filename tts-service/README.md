@@ -9,7 +9,7 @@ cd tts-service
 .\setup.ps1
 ```
 
-The local `.env` points to `D:\AI_Models\Kokoro`. Copy `.env.example` for a portable relative-path setup. If the model files are missing, setup downloads the official `model-files-v1.1` assets or prints the exact manual PowerShell command when download is unavailable.
+The local `.env` controls `KOKORO_MODEL_PATH` and `KOKORO_VOICES_PATH`. The tracked example uses paths relative to `tts-service`; setup downloads missing official `model-files-v1.1` assets to those configured paths or prints a manual PowerShell command when download is unavailable.
 
 ## Run
 
@@ -19,4 +19,4 @@ The local `.env` points to `D:\AI_Models\Kokoro`. Copy `.env.example` for a port
 
 The default service is `http://127.0.0.1:8766`. The model remains unloaded until Node prepares TTS. Verify with `/health`, `/voices`, `/model/load`, `/synthesize`, and `/model/unload`.
 
-Kokoro ONNX runtime is MIT licensed and the Kokoro model is Apache 2.0; verify the upstream notices before redistribution.
+Review the project third-party notice before redistribution. This repository does not independently verify upstream license terms for the Kokoro runtime or model assets.

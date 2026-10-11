@@ -28,7 +28,7 @@ Start the service:
 .\start.ps1
 ```
 
-Verify service health at `http://127.0.0.1:8765/health`. The service stays alive with the model unloaded and loads it through `/model/load` when Node prepares a recording. The current 4GB development profile is `base.en` on CPU with `int8`; `small.en` and `medium.en` remain explicit quality options. The first load may download the model:
+Verify service health at `http://127.0.0.1:8765/health`. The service stays alive with the model unloaded and loads it through `/model/load` when Node prepares a recording. The low-memory profile uses `base.en` on CPU with `int8`; `small.en` and `medium.en` remain explicit quality options for suitable hardware. The first load may download the model:
 
 ```text
 FASTER_WHISPER_MODEL=base.en
